@@ -26,7 +26,7 @@ class FLIP_VALIDATOR(Executor):
         self._validate_task_name = validate_task_name
 
         self.model = SimpleNetwork()
-        self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
 
         self.val_transforms = transforms.Compose(
@@ -34,9 +34,8 @@ class FLIP_VALIDATOR(Executor):
                 transforms.LoadImaged(keys=["image"], reader="NiBabelReader", as_closest_canonical=False),
                 transforms.EnsureChannelFirstd(keys=["image"]),
                 transforms.ScaleIntensityRanged(keys=["image"], a_min=-15, a_max=100, b_min=0, b_max=1, clip=True),
-                transforms.CenterSpatialCropd(keys=["image"], roi_size=(512, 512, 256)),
-                transforms.SpatialPadd(keys=["image"], spatial_size=(512, 512, 256)),
-                transforms.Resized(keys=["image"], spatial_size=(96, 96, 48)),
+                transforms.CenterSpatialCropd(keys=["image"], roi_size=(160, 160, 80)),
+                transforms.Resized(keys=["image"], spatial_size=(80, 80, 40)),
                 transforms.ToTensord(keys=["image"]),
             ]
         )
@@ -99,17 +98,13 @@ class FLIP_VALIDATOR(Executor):
         if task_name == self._validate_task_name:
             test_dict = self.get_datalist(self.dataframe)
             self._test_dataset = Dataset(test_dict, transform=self.val_transforms)
-            self._test_loader = DataLoader(self._test_dataset, batch_size=1, shuffle=False)
+            self._test_loader = DataLoader(self._test_dataset, batch_size=16, shuffle=False, num_workers=4)
 
             # Get model weights
             dxo = from_shareable(shareable)
 
             # Ensure data_kind is weights.
             if not dxo.data_kind == DataKind.WEIGHTS:
-                self.log_exception(
-                    fl_ctx,
-                    f"DXO is of type {dxo.data_kind} but expected type WEIGHTS.",
-                )
                 return make_reply(ReturnCode.BAD_TASK_DATA)
 
             # Extract weights and ensure they are tensor.

@@ -890,7 +890,9 @@ class SimpleNetwork(nn.Module):
             ch_mult=(1, 2, 2),
             num_res_blocks=1,
             norm_num_groups=16,
-            attention_levels=(False, False, True),
+            attention_levels=(False, False, False),
+            with_encoder_nonlocal_attn=False,
+            with_decoder_nonlocal_attn=False,
         )
         self.discriminator = PatchDiscriminator(
             spatial_dims=3,

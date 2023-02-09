@@ -49,8 +49,8 @@ class FLIP_TRAINER(Executor):
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
 
-        self.optimizer_g = torch.optim.Adam(params=self.model.autoencoder.parameters(), lr=1e-4)
-        self.optimizer_d = torch.optim.Adam(params=self.model.discriminator.parameters(), lr=5e-4)
+        self.optimizer_g = torch.optim.Adam(params=self.model.autoencoder.parameters(), lr=1e-5)
+        self.optimizer_d = torch.optim.Adam(params=self.model.discriminator.parameters(), lr=5e-5)
 
         self.scaler_g = GradScaler()
         self.scaler_d = GradScaler()
@@ -71,9 +71,8 @@ class FLIP_TRAINER(Executor):
                 transforms.LoadImaged(keys=["image"], reader="NiBabelReader", as_closest_canonical=False),
                 transforms.EnsureChannelFirstd(keys=["image"]),
                 transforms.ScaleIntensityRanged(keys=["image"], a_min=-15, a_max=100, b_min=0, b_max=1, clip=True),
-                transforms.CenterSpatialCropd(keys=["image"], roi_size=(512, 512, 256)),
-                transforms.SpatialPadd(keys=["image"], spatial_size=(512, 512, 256)),
-                transforms.Resized(keys=["image"], spatial_size=(96, 96, 48)),
+                transforms.CenterSpatialCropd(keys=["image"], roi_size=(160, 160, 80)),
+                transforms.Resized(keys=["image"], spatial_size=(80, 80, 40)),
                 transforms.ToTensord(keys=["image"]),
             ]
         )
@@ -147,11 +146,11 @@ class FLIP_TRAINER(Executor):
                         + self.adv_weight * generator_loss
                     )
 
-                    self.scaler_g.scale(loss).backward()
-                    self.scaler_g.unscale_(self.optimizer_g)
-                    torch.nn.utils.clip_grad_norm_(self.model.autoencoder.parameters(), 1)
-                    self.scaler_g.step(self.optimizer_g)
-                    self.scaler_g.update()
+                self.scaler_g.scale(loss).backward()
+                self.scaler_g.unscale_(self.optimizer_g)
+                torch.nn.utils.clip_grad_norm_(self.model.autoencoder.parameters(), 1)
+                self.scaler_g.step(self.optimizer_g)
+                self.scaler_g.update()
 
                 # Discriminator part
                 self.optimizer_d.zero_grad(set_to_none=True)
@@ -175,14 +174,6 @@ class FLIP_TRAINER(Executor):
                 epoch_recons_loss += l1_loss.item()
                 epoch_discriminator_loss += d_loss.item()
 
-            self.log_info(
-                fl_ctx,
-                (
-                    f"Epoch: {epoch+1}/{self.config['LOCAL_ROUNDS']} "
-                    f"Loss: {epoch_recons_loss / (step + 1)} "
-                    f"Disc_Loss: {epoch_discriminator_loss / (step + 1)}"
-                ),
-            )
             self.flip.send_metrics_value("Loss", epoch_recons_loss / (step + 1), fl_ctx)
             self.flip.send_metrics_value("Disc_Loss", epoch_discriminator_loss / (step + 1), fl_ctx)
 
@@ -197,7 +188,7 @@ class FLIP_TRAINER(Executor):
         if task_name == self._train_task_name:
             train_dict = self.get_datalist(self.dataframe)
             self._train_dataset = Dataset(train_dict, transform=self._train_transforms)
-            self._train_loader = DataLoader(self._train_dataset, batch_size=1, shuffle=True, num_workers=1)
+            self._train_loader = DataLoader(self._train_dataset, batch_size=16, shuffle=True, num_workers=4)
             self._n_iterations = len(self._train_loader)
 
             # Get model weights
@@ -205,10 +196,6 @@ class FLIP_TRAINER(Executor):
 
             # Ensure data_kind is weights.
             if not dxo.data_kind == DataKind.WEIGHTS:
-                self.log_error(
-                    fl_ctx,
-                    f"DXO is of type {dxo.data_kind} but expected type WEIGHTS.",
-                )
                 return make_reply(ReturnCode.BAD_TASK_DATA)
 
             weights = {k: torch.as_tensor(v, device=self.device) for k, v in dxo.data.items()}
