@@ -50,7 +50,15 @@ class FLIP_VALIDATOR(Executor):
 
         datalist = []
         for accession_id in val_dataframe["accession_id"]:
-            image_data_folder_path = self.flip.get_by_accession_number(self.project_id, accession_id)
+            try:
+                image_data_folder_path = self.flip.get_by_accession_number(self.project_id, accession_id)
+            except Exception as err:
+                print(f"Could not get image data folder path for {accession_id}:")
+                print(f"{err=}")
+                print(f"{type(err)=}")
+                print(f"{err.args=}")
+                continue
+
             accession_folder_path = Path(image_data_folder_path) / accession_id
 
             for image in accession_folder_path.glob("**/*_space-IXI549Space_desc-rigid_ct.nii"):
