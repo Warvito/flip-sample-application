@@ -1,7 +1,6 @@
-from pathlib import Path
 import json
+from pathlib import Path
 
-import nibabel as nib
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -21,7 +20,7 @@ from torch.cuda.amp import GradScaler, autocast
 from flip import FLIP
 from perceptual_loss import PerceptualLoss
 from pt_constants import PTConstants
-from simple_network import kl_loss_function, PatchAdversarialLoss, SimpleNetwork
+from simple_network import PatchAdversarialLoss, SimpleNetwork, kl_loss_function
 
 
 class FLIP_TRAINER(Executor):
@@ -101,12 +100,10 @@ class FLIP_TRAINER(Executor):
             image_data_folder_path = self.flip.get_by_accession_number(self.project_id, accession_id)
             accession_folder_path = Path(image_data_folder_path) / accession_id
 
-            for image in list(accession_folder_path.rglob("*.nii*")):
-                header = nib.load(str(image))
-
-                # check is 3D and at least 128x128x128 in size
-                if len(header.shape) == 3 and all([dim >= 128 for dim in header.shape]):
-                    datalist.append({"image": str(image)})
+            for image in accession_folder_path.glob("**/*_space-IXI549Space_desc-rigid_ct.nii"):
+                if "_acq-Brain5mm" in image.stem:
+                    continue
+                datalist.append({"image": str(image)})
 
         print(f"Found {len(datalist)} files in the training set")
         return datalist
