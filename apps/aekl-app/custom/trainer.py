@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+import os
 
 import numpy as np
 import torch
@@ -16,6 +17,7 @@ from nvflare.app_common.abstract.model import make_model_learnable, model_learna
 from nvflare.app_common.app_constant import AppConstants
 from nvflare.app_common.pt.pt_fed_utils import PTModelPersistenceFormatManager
 from torch.cuda.amp import GradScaler, autocast
+import nibabel as nib
 
 from flip import FLIP
 from perceptual_loss import PerceptualLoss
@@ -92,11 +94,15 @@ class FLIP_TRAINER(Executor):
         self.project_id = project_id
         self.query = query
 
+        train_dict = self.get_datalist(self.dataframe)
+        self._train_dataset = Dataset(train_dict, transform=self._train_transforms)
+        self._train_loader = DataLoader(self._train_dataset, batch_size=16, shuffle=True, num_workers=4)
+        self._n_iterations = len(self._train_loader)
+
     def get_datalist(self, dataframe, val_split=0.2):
-        train_dataframe, _ = np.split(dataframe, [int((1 - val_split) * len(dataframe))])
 
         datalist = []
-        for accession_id in train_dataframe["accession_id"]:
+        for accession_id in dataframe["accession_id"]:
             try:
                 image_data_folder_path = self.flip.get_by_accession_number(self.project_id, accession_id)
             except Exception as err:
@@ -106,16 +112,60 @@ class FLIP_TRAINER(Executor):
                 print(f"{err.args=}")
                 continue
 
-            accession_folder_path = Path(image_data_folder_path) / accession_id
+            accession_folder_path = os.path.join(image_data_folder_path, accession_id)
 
-            for image in accession_folder_path.glob("**/*_space-IXI549Space_desc-affine_ct.nii"):
-                if "_acq-Brain5mm" in image.stem:
+            all_images = list(Path(accession_folder_path).rglob("sub-*_desc-affine_ct.nii"))
+
+            this_accession_matches = 0
+            print(f"Total base CT count found for accession_id {accession_id}: {len(all_images)}")
+            for img in all_images:
+                seg = str(img).replace("_ct", "_label-lesion_mask").replace(".nii", ".nii.gz")
+
+                if not Path(seg).exists():
+                    print(f"No matching lesion mask for {img}.")
                     continue
-                datalist.append({"image": str(image)})
 
-        print(f"Found {len(datalist)} files in the training set")
-        return datalist
+                try:
+                    img_header = nib.load(str(img))
+                except nib.filebasedimages.ImageFileError as err:
+                    print(f"Problem loading header of base image {str(img)}.")
+                    print(f"{err=}")
+                    print(f"{type(err)=}")
+                    print(f"{err.args=}")
+                    continue
 
+                try:
+                    seg_header = nib.load(seg)
+                except nib.filebasedimages.ImageFileError as err:
+                    print(f"Problem loading header of segmentation {str(seg)}.")
+                    print(f"{err=}")
+                    print(f"{type(err)=}")
+                    print(f"{err.args=}")
+                    continue
+
+                # check is 3D and at least 128x128x128 in size and seg is the same
+                if len(img_header.shape) != 3:
+                    print(f"Image has other than 3 dimensions (it has {len(img_header.shape)}.)")
+                    continue
+                elif any([dim < 128 for dim in img_header.shape]):
+                    print(f"Image has one or more dimensions <128: ({img_header.shape}).")
+                    continue
+                elif any([img_dim != seg_dim for img_dim, seg_dim in zip(img_header.shape, seg_header.shape)]):
+                    print(
+                        f"Image dimensions ({img_header.shape}) do not match segmentation dimensions ({seg_header.shape})."
+                    )
+                    continue
+                else:
+                    datalist.append({"image": str(img), "seg": seg})
+                    print(f"Matching base image and segmentation added.")
+                    this_accession_matches += 1
+            print(f"Added {this_accession_matches} matched image + segmentation pairs for {accession_id}.")
+        print(f"Found {len(datalist)} files in train")
+
+        # split into the training and testing data
+        train_datalist, val_datalist = np.split(datalist, [int((1 - val_split) * len(datalist))])
+
+        return train_datalist
     def local_train(self, fl_ctx, weights, abort_signal):
         self.model.load_state_dict(state_dict=weights)
         self.model.train()
@@ -191,11 +241,6 @@ class FLIP_TRAINER(Executor):
     ) -> Shareable:
 
         if task_name == self._train_task_name:
-            train_dict = self.get_datalist(self.dataframe)
-            self._train_dataset = Dataset(train_dict, transform=self._train_transforms)
-            self._train_loader = DataLoader(self._train_dataset, batch_size=16, shuffle=True, num_workers=4)
-            self._n_iterations = len(self._train_loader)
-
             # Get model weights
             dxo = from_shareable(shareable)
 
