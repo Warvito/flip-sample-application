@@ -108,7 +108,7 @@ class FLIP_TRAINER(Executor):
 
             accession_folder_path = Path(image_data_folder_path) / accession_id
 
-            for image in accession_folder_path.glob("**/*_space-IXI549Space_desc-rigid_ct.nii"):
+            for image in accession_folder_path.glob("**/*_space-IXI549Space_desc-affine_ct.nii"):
                 if "_acq-Brain5mm" in image.stem:
                     continue
                 datalist.append({"image": str(image)})
